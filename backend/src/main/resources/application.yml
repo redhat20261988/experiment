@@ -1,0 +1,32 @@
+spring:
+  application:
+    name: funding-rate-monitor
+  datasource:
+    url: jdbc:mysql://localhost:3306/future_arbitrage?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: root
+    password: rootroot
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      username: default
+      password: igVP9LqVBGJFNh9
+      database: 0
+      timeout: 3000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 0
+
+server:
+  port: 8080
+
+# CORS for frontend
+cors:
+  allowed-origins: http://localhost:5173,http://127.0.0.1:5173

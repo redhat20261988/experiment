@@ -1,0 +1,19 @@
+# 日志目录
+logs/
+*.log
+
+# 构建产物
+target/
+
+# 编辑器/IDE 配置
+.cursor/
+.vscode/
+
+# 前端依赖和构建
+node_modules/
+dist/
+dist-ssr/
+
+# 其他
+.DS_Store
+*.local
