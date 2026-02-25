@@ -9,6 +9,10 @@ target/
 .cursor/
 .vscode/
 
+# 前端运行时文件
+.frontend.pid
+.frontend.log
+
 # 前端依赖和构建
 node_modules/
 dist/

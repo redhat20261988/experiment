@@ -159,11 +159,31 @@ stop() {
     fi
 }
 
+# 强制释放端口（当无 PID 文件但端口被占用时）
+force_release_port() {
+    if ! is_running && is_port_in_use; then
+        print_warn "检测到端口 $PORT 被占用但无 PID 文件，尝试释放端口..."
+        if command -v lsof > /dev/null 2>&1; then
+            PIDS=$(lsof -t -i :$PORT 2>/dev/null)
+            if [ -n "$PIDS" ]; then
+                echo "$PIDS" | xargs kill 2>/dev/null
+                sleep 2
+                # 若仍未释放则强制结束
+                PIDS=$(lsof -t -i :$PORT 2>/dev/null)
+                [ -n "$PIDS" ] && echo "$PIDS" | xargs kill -9 2>/dev/null
+                sleep 1
+                print_info "已释放端口 $PORT"
+            fi
+        fi
+    fi
+}
+
 # 重启服务
 restart() {
     print_info "正在重启前端服务..."
     stop
     sleep 1
+    force_release_port
     start
 }
 
