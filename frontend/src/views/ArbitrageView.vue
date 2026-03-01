@@ -47,27 +47,11 @@ function normalizeFundingRate(rate, exchange) {
   return exchange === 'bitunix' ? Number(rate) / 100 : Number(rate)
 }
 
-function computeMaxFundingSpread(data) {
-  let best = null
-  let bestSpread = -1
-  for (let i = 0; i < data.length; i++) {
-    const ra = normalizeFundingRate(data[i].fundingRate, data[i].exchange)
-    if (ra == null) continue
-    for (let j = i + 1; j < data.length; j++) {
-      const rb = normalizeFundingRate(data[j].fundingRate, data[j].exchange)
-      if (rb == null) continue
-      const spread = Math.abs(ra - rb)
-      if (spread > bestSpread) {
-        bestSpread = spread
-        // 买入=低费率(做多)，卖出=高费率(做空)
-        const buyData = ra <= rb ? data[i] : data[j]
-        const sellData = ra > rb ? data[i] : data[j]
-        const fundingDiff = (ra > rb ? ra - rb : rb - ra) // 卖出费率 - 买入费率
-        best = { buy: buyData, sell: sellData, fundingDiff }
-      }
-    }
-  }
-  return best
+function formatTrimmedNumber(value, maxDecimals = 8) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return '-'
+  if (Math.abs(n) < 1e-12) return '0'
+  return n.toFixed(maxDecimals).replace(/\.?0+$/, '')
 }
 
 /** 解析现货手续费率为 maker/taker（百分比数值，如 0.1 表示 0.1%）。"0.08%/0.1%" 为 maker/taker，单值 "0.1%" 或数字视为 maker=taker，"-" 视为 0 */
@@ -140,19 +124,6 @@ function computeMaxSpotSpread(data) {
   return best
 }
 
-// 资金费率套利表格行：每币种一行
-const fundingTableRows = computed(() => {
-  return symbols.map(sym => {
-    const data = marketDataBySymbol.value[sym] || []
-    const r = computeMaxFundingSpread(data)
-    if (!r) return { symbol: sym, row: null }
-    return {
-      symbol: sym,
-      row: { buy: r.buy, sell: r.sell, fundingDiff: r.fundingDiff }
-    }
-  })
-})
-
 // 现货价差套利表格行
 const spotTableRows = computed(() => {
   return symbols.map(sym => {
@@ -163,19 +134,62 @@ const spotTableRows = computed(() => {
   })
 })
 
+// 最大资金费率组合：每个币种取资金费率最小值为买入，最大值为卖出
+const maxFundingComboRows = computed(() => {
+  return symbols.map(sym => {
+    const data = marketDataBySymbol.value[sym] || []
+    const withRate = data
+      .map(d => ({ d, r: normalizeFundingRate(d.fundingRate, d.exchange) }))
+      .filter(x => x.r != null)
+      .sort((a, b) => a.r - b.r)
+
+    if (withRate.length < 2) return { symbol: sym, row: null }
+
+    const buy = withRate[0]
+    const sell = withRate[withRate.length - 1]
+    const totalYield = sell.r - buy.r
+
+    return {
+      symbol: sym,
+      row: {
+        buy: buy.d,
+        sell: sell.d,
+        buyRate: buy.r,
+        sellRate: sell.r,
+        totalYield,
+        monthlyYield: totalYield * 90,
+        yearlyYield: totalYield * 1095
+      }
+    }
+  })
+})
+
 function formatRate(rate, exchange) {
   if (rate == null) return '-'
-  if (exchange === 'bitunix') return Number(rate).toFixed(4) + '%'
-  const pct = Number(rate) * 100
-  // 极小值（如 Kraken BTC）toFixed(4) 会四舍五入为 0.0000%，需增加小数位以显示非零
-  const decimals = (Math.abs(pct) > 0 && Math.abs(pct) < 0.0001) ? 8 : 4
-  return pct.toFixed(decimals) + '%'
+  const pct = exchange === 'bitunix' ? Number(rate) : Number(rate) * 100
+  const formatted = formatTrimmedNumber(pct, 8)
+  return formatted === '0' ? '0' : `${formatted}%`
 }
 
-function formatPrice(price) {
+function formatRateForMaxFundingCombo(rate, exchange) {
+  if (rate == null) return '-'
+  const pct = exchange === 'bitunix' ? Number(rate) : Number(rate) * 100
+  const formatted = formatTrimmedNumber(pct, 6)
+  return formatted === '0' ? '0' : `${formatted}%`
+}
+
+function formatPrice(price, isFutures = false) {
   if (price == null) return '-'
   const n = Number(price)
-  return n >= 1000 ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : n.toFixed(4)
+  if (!Number.isFinite(n)) return '-'
+  if (isFutures) {
+    return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  }
+  if (Math.abs(n) < 1e-12) return '0'
+  if (Math.abs(n) >= 1000) {
+    return n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 8 })
+  }
+  return formatTrimmedNumber(n, 8)
 }
 
 // 价差格式化：按数值大小动态保留小数位，避免 XRP/DOGE 等低价币显示为 0
@@ -215,8 +229,25 @@ function formatFeePctWithRole(pct, role) {
 function formatFundingSpreadPercent(decimalSpread) {
   if (decimalSpread == null) return '-'
   const pct = Number(decimalSpread) * 100
-  const sign = pct >= 0 ? '+' : ''
-  return sign + pct.toFixed(4) + '%'
+  const sign = pct > 0 ? '+' : ''
+  const formatted = formatTrimmedNumber(pct, 8)
+  return formatted === '0' ? '0' : `${sign}${formatted}%`
+}
+
+function formatYieldPercentFixed2NoPlus(decimalSpread) {
+  if (decimalSpread == null) return '-'
+  const pct = Number(decimalSpread) * 100
+  if (!Number.isFinite(pct)) return '-'
+  if (Math.abs(pct) < 1e-12) return '0'
+  return `${pct.toFixed(2)}%`
+}
+
+function formatYieldPercentFixed6NoPlus(decimalSpread) {
+  if (decimalSpread == null) return '-'
+  const pct = Number(decimalSpread) * 100
+  if (!Number.isFinite(pct)) return '-'
+  if (Math.abs(pct) < 1e-12) return '0'
+  return `${pct.toFixed(6)}%`
 }
 
 function exchangeLabel(exchange) {
@@ -297,47 +328,49 @@ onUnmounted(() => stopPolling())
     <div v-if="loading && Object.keys(marketDataBySymbol).length === 0" class="loading">加载中...</div>
 
     <template v-else>
-      <!-- 资金费率套利 -->
+      <!-- 最大资金费率组合 -->
       <section class="arb-section">
-        <h2 class="arb-title">资金费率套利</h2>
+        <h2 class="arb-title">最大资金费率组合</h2>
         <div class="table-wrap">
           <table class="data-table arb-table funding-arb-table">
             <thead>
               <tr>
-                <th rowspan="2">币种</th>
-                <th colspan="3">买入交易所</th>
-                <th colspan="3">卖出交易所</th>
-                <th rowspan="2" class="col-funding-diff">资金费率之差</th>
-                <th rowspan="2" class="col-funding-diff">月度资金费率之差</th>
-                <th rowspan="2" class="col-funding-diff">年度资金费率之差</th>
-              </tr>
-              <tr class="sub-header">
-                <th>交易所</th>
-                <th class="col-funding-rate">资金费率</th>
-                <th class="col-futures-price">期货价格</th>
-                <th>交易所</th>
-                <th class="col-funding-rate">资金费率</th>
-                <th class="col-futures-price">期货价格</th>
+                <th>币种</th>
+                <th>买入交易所</th>
+                <th>买入交易所费率</th>
+                <th>买入期货价格</th>
+                <th>卖出交易所</th>
+                <th>卖出交易所费率</th>
+                <th>卖出期货价格</th>
+                <th>8小时总收益率</th>
+                <th>月总收益率</th>
+                <th>年总收益率</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="item in fundingTableRows" :key="item.symbol">
+              <tr v-for="item in maxFundingComboRows" :key="'max-funding-' + item.symbol">
                 <td v-if="!item.row" :colspan="10" class="empty-row">{{ item.symbol }} 暂无足够数据</td>
                 <template v-else>
                   <td class="symbol-cell">{{ item.symbol }}</td>
                   <td>{{ exchangeLabel(item.row.buy.exchange) }}</td>
-                  <td class="col-funding-rate" :class="{ positive: item.row.buy.fundingRate != null && item.row.buy.fundingRate > 0, negative: item.row.buy.fundingRate != null && item.row.buy.fundingRate < 0 }">
-                    {{ formatRate(item.row.buy.fundingRate, item.row.buy.exchange) }}
+                  <td :class="{ positive: item.row.buyRate > 0, negative: item.row.buyRate < 0 }">
+                    {{ formatRateForMaxFundingCombo(item.row.buy.fundingRate, item.row.buy.exchange) }}
                   </td>
-                  <td class="col-futures-price">{{ formatPrice(item.row.buy.futuresPrice) }}</td>
+                  <td>{{ formatPrice(item.row.buy.futuresPrice, true) }}</td>
                   <td>{{ exchangeLabel(item.row.sell.exchange) }}</td>
-                  <td class="col-funding-rate" :class="{ positive: item.row.sell.fundingRate != null && item.row.sell.fundingRate > 0, negative: item.row.sell.fundingRate != null && item.row.sell.fundingRate < 0 }">
-                    {{ formatRate(item.row.sell.fundingRate, item.row.sell.exchange) }}
+                  <td :class="{ positive: item.row.sellRate > 0, negative: item.row.sellRate < 0 }">
+                    {{ formatRateForMaxFundingCombo(item.row.sell.fundingRate, item.row.sell.exchange) }}
                   </td>
-                  <td class="col-futures-price">{{ formatPrice(item.row.sell.futuresPrice) }}</td>
-                  <td class="spread-cell col-funding-diff">{{ formatFundingSpreadPercent(item.row.fundingDiff) }}</td>
-                  <td class="spread-cell col-funding-diff">{{ formatFundingSpreadPercent((item.row.fundingDiff ?? 0) * 90) }}</td>
-                  <td class="spread-cell col-funding-diff">{{ formatFundingSpreadPercent((item.row.fundingDiff ?? 0) * 1095) }}</td>
+                  <td>{{ formatPrice(item.row.sell.futuresPrice, true) }}</td>
+                  <td class="spread-cell" :class="{ positive: item.row.totalYield > 0, negative: item.row.totalYield < 0 }">
+                    {{ formatYieldPercentFixed6NoPlus(item.row.totalYield) }}
+                  </td>
+                  <td class="spread-cell" :class="{ positive: item.row.monthlyYield > 0, negative: item.row.monthlyYield < 0 }">
+                    {{ formatYieldPercentFixed2NoPlus(item.row.monthlyYield) }}
+                  </td>
+                  <td class="spread-cell" :class="{ positive: item.row.yearlyYield > 0, negative: item.row.yearlyYield < 0 }">
+                    {{ formatYieldPercentFixed2NoPlus(item.row.yearlyYield) }}
+                  </td>
                 </template>
               </tr>
             </tbody>

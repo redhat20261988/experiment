@@ -14,7 +14,8 @@ import java.util.List;
 /**
  * Kraken Futures HTTP Fetcher。
  * 调用 https://futures.kraken.com/derivatives/api/v3/tickers 接口获取资金费率。
- * 使用 PF_ 永续合约（如 PF_XBTUSD），资金费率 = fundingRate/markPrice，为每小时原值，接口返回 8 小时费率需乘以 8。
+ * 使用 PF_ 永续合约（如 PF_XBTUSD），每小时资金费率 = fundingRate / indexPrice，
+ * 再统一转换为 8 小时费率后入库。
  * API: https://docs.futures.kraken.com/
  */
 public class KrakenFetcher implements HttpExchangeFetcher {
@@ -22,12 +23,13 @@ public class KrakenFetcher implements HttpExchangeFetcher {
     private static final String TICKER_URL = "https://futures.kraken.com/derivatives/api/v3/tickers";
     private static final BigDecimal EIGHT = new BigDecimal("8");
 
-    // PF_=perpetual futures，资金费率 = fundingRate/markPrice（每小时），×8 为 8 小时费率
+    // PF_=perpetual futures，按 fundingRate / indexPrice 计算每小时费率，再 ×8 转换为 8 小时费率
     private static final List<FundingSymbol> FUNDING_SYMBOLS = List.of(
             new FundingSymbol("PF_XBTUSD", "BTCUSDT"),
             new FundingSymbol("PF_ETHUSD", "ETHUSDT"),
             new FundingSymbol("PF_SOLUSD", "SOLUSDT"),
             new FundingSymbol("PF_XRPUSD", "XRPUSDT"),
+            new FundingSymbol("PF_HYPEUSD", "HYPEUSDT"),
             new FundingSymbol("PF_DOGEUSD", "DOGEUSDT"),
             new FundingSymbol("PF_BNBUSD", "BNBUSDT"));
 
@@ -88,21 +90,21 @@ public class KrakenFetcher implements HttpExchangeFetcher {
         return null;
     }
 
-    /** 8h 资金费率 = (fundingRate/markPrice) * 8，其中 fundingRate/markPrice 为每小时原值 */
+    /** 8h 资金费率 = (fundingRate / indexPrice) * 8 */
     private void processTicker(JsonNode ticker, String stdSymbol) {
         BigDecimal fundingRateRaw = parseDecimal(ticker, "fundingRate");
-        BigDecimal markPrice = parseDecimal(ticker, "markPrice");
-        if (markPrice == null) markPrice = parseDecimal(ticker, "mark_price");
-        if (markPrice == null) markPrice = parseDecimal(ticker, "mark");
-        if (fundingRateRaw != null && markPrice != null && markPrice.compareTo(BigDecimal.ZERO) != 0) {
-            BigDecimal hourlyRate = fundingRateRaw.divide(markPrice, 12, java.math.RoundingMode.HALF_UP);
-            BigDecimal rate8h = hourlyRate.multiply(EIGHT);
-            marketDataService.saveFundingRate("kraken", stdSymbol, rate8h, null);
-        }
-
         BigDecimal indexPrice = parseDecimal(ticker, "indexPrice");
         if (indexPrice == null) indexPrice = parseDecimal(ticker, "index_price");
         if (indexPrice == null) indexPrice = parseDecimal(ticker, "index");
+        BigDecimal markPrice = parseDecimal(ticker, "markPrice");
+        if (markPrice == null) markPrice = parseDecimal(ticker, "mark_price");
+        if (markPrice == null) markPrice = parseDecimal(ticker, "mark");
+        if (fundingRateRaw != null && indexPrice != null && indexPrice.compareTo(BigDecimal.ZERO) != 0) {
+            BigDecimal hourlyRateDecimal = fundingRateRaw.divide(indexPrice, 12, java.math.RoundingMode.HALF_UP);
+            BigDecimal rate8h = hourlyRateDecimal.multiply(EIGHT);
+            marketDataService.saveFundingRate("kraken", stdSymbol, rate8h, null);
+        }
+
         BigDecimal lastPrice = parseDecimal(ticker, "last");
         if (lastPrice == null) lastPrice = parseDecimal(ticker, "lastPrice");
         if (lastPrice == null) lastPrice = parseDecimal(ticker, "price");

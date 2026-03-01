@@ -100,17 +100,19 @@ function sortIcon(key) {
   return sortOrder.value === 'asc' ? '↑' : '↓'
 }
 
+function formatTrimmedNumber(value, maxDecimals = 8) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return '-'
+  if (Math.abs(n) < 1e-12) return '0'
+  return n.toFixed(maxDecimals).replace(/\.?0+$/, '')
+}
+
 function formatRate(rate, exchange) {
   if (rate == null) return '-'
-  // Bitunix API返回的资金费率已经是百分比形式（已乘以100），不需要再乘以100
-  if (exchange === 'bitunix') {
-    return Number(rate).toFixed(4) + '%'
-  }
-  // 其他交易所返回的是小数形式，需要乘以100转换为百分比
-  const pct = Number(rate) * 100
-  // Kraken 等交易所资金费率可能极小（如 -0.00000002），toFixed(4) 会四舍五入为 0.0000%，需增加小数位
-  const decimals = (Math.abs(pct) > 0 && Math.abs(pct) < 0.0001) ? 8 : 4
-  return pct.toFixed(decimals) + '%'
+  // Bitunix 返回百分比数值；其他交易所返回小数，需转百分比
+  const pct = exchange === 'bitunix' ? Number(rate) : Number(rate) * 100
+  const formatted = formatTrimmedNumber(pct, 8)
+  return formatted === '0' ? '0' : `${formatted}%`
 }
 
 // 计算月资金费率：假设资金费率周期为8小时，一天结算3次，一个月30天
@@ -146,7 +148,15 @@ function formatYearlyRate(rate, exchange) {
 function formatPrice(price, exchange, isFutures = false) {
   if (price == null) return '-'
   const n = Number(price)
-  return n >= 1000 ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : n.toFixed(4)
+  if (!Number.isFinite(n)) return '-'
+  if (isFutures) {
+    return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  }
+  if (Math.abs(n) < 1e-12) return '0'
+  if (Math.abs(n) >= 1000) {
+    return n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 8 })
+  }
+  return formatTrimmedNumber(n, 8)
 }
 
 function formatTime(ts) {
